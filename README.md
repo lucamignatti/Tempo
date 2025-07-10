@@ -80,27 +80,5 @@ While additional platforms can be easily added, this bot features the following 
 - `/deauth <platform>` - Remove authorization for a platform
 - `/setplatform <platform>` - Set your preferred platform for searches
 
-### Playlist Features
-The bot now supports two types of playlist importing:
-
-#### Queue Import (Immediate Playback)
-- `/queueplaylist <url>` - Imports playlist directly to the current queue for immediate playback
-- Requires you to be in a voice channel
-- Songs will start playing immediately or be added to the existing queue
-
-#### Personal Library Import
-- `/importplaylist <url> [name]` - Imports playlist to your personal library for later use
-- Does not require being in a voice channel
-- Optionally specify a custom name for the saved playlist
-- Use `/playlists` to see all your saved playlists
-- Use `/playplaylist <name>` to play songs from a saved playlist
-
-Both commands support:
-- **Spotify**: `https://open.spotify.com/playlist/{playlist_id}` (requires authentication)
-- **YouTube**: `https://www.youtube.com/playlist?list={playlist_id}` (no authentication required)
-
-The bot automatically detects the platform from the URL format.
-
-
 known issues:
  - freeze on search
