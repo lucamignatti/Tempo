@@ -66,11 +66,17 @@ def getuserdata(id):
         cursor = db.cursor()
         rows = cursor.execute("SELECT * FROM users WHERE id=?", (id,)).fetchall()
         if rows:
-            return json.loads(rows[0][1])
+            data = json.loads(rows[0][1])
+            # Migrate existing users to include playlists field
+            if "playlists" not in data:
+                data["playlists"] = {}
+                saveuserdata(id, data)
+            return data
         else:
             default = {
                 "platform": "default",
-                "keys": {"youtube": None}
+                "keys": {"youtube": None},
+                "playlists": {}
             }
             cursor.execute("INSERT INTO users (id, data) VALUES (?, ?)", (id, json.dumps(default)))
             return default
@@ -104,6 +110,66 @@ def rmuserkey(id, platform):
 def getuserkey(id, platform):
     userdata = getuserdata(id)
     return userdata["keys"][platform]
+
+
+def create_user_playlist(user_id, playlist_name):
+    """Create a new user playlist"""
+    userdata = getuserdata(user_id)
+    if playlist_name in userdata["playlists"]:
+        return False  # Playlist already exists
+    userdata["playlists"][playlist_name] = []
+    saveuserdata(user_id, userdata)
+    return True
+
+def add_song_to_user_playlist(user_id, playlist_name, song_dict):
+    """Add a song to a user playlist"""
+    userdata = getuserdata(user_id)
+    if playlist_name not in userdata["playlists"]:
+        userdata["playlists"][playlist_name] = []
+    userdata["playlists"][playlist_name].append(song_dict)
+    saveuserdata(user_id, userdata)
+
+def get_user_playlists(user_id):
+    """Get all user playlists"""
+    userdata = getuserdata(user_id)
+    return userdata["playlists"]
+
+def get_user_playlist(user_id, playlist_name):
+    """Get a specific user playlist"""
+    userdata = getuserdata(user_id)
+    return userdata["playlists"].get(playlist_name, None)
+
+def delete_user_playlist(user_id, playlist_name):
+    """Delete a user playlist"""
+    userdata = getuserdata(user_id)
+    if playlist_name in userdata["playlists"]:
+        del userdata["playlists"][playlist_name]
+        saveuserdata(user_id, userdata)
+        return True
+    return False
+
+def song_to_dict(song):
+    """Convert a Song object to a dictionary for storage"""
+    return {
+        "title": song.title,
+        "author": song.author,
+        "backend": song.backend,
+        "length": song.length,
+        "url": song.url,
+        "user_id": song.user.id
+    }
+
+def dict_to_song(song_dict, bot):
+    """Convert a dictionary back to a Song object"""
+    user = bot.get_user(song_dict["user_id"])
+    return Song(
+        user=user,
+        title=song_dict["title"],
+        author=song_dict["author"],
+        backend=song_dict["backend"],
+        length=song_dict["length"],
+        url=song_dict["url"]
+    )
 
 
 
