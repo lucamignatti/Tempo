@@ -6,13 +6,22 @@ import sqlite3
 import discord
 import random
 import numpy as np
-from tts import generate
-from discord.ext import voice_recv
-import math
-from faster_whisper import WhisperModel
-import io
-import wave
-import array
+try:
+    from tts import generate
+except ImportError:
+    generate = None  # TTS is optional
+try:
+    from discord.ext import voice_recv
+except ImportError:
+    voice_recv = None  # Voice features are optional
+try:
+    import math
+    from faster_whisper import WhisperModel
+    import io
+    import wave
+    import array
+except ImportError:
+    WhisperModel = None  # Whisper is optional
 from collections import defaultdict
 import json
 
@@ -186,9 +195,9 @@ class MusicPlayer:
 
         self.mixer = Mixer()
 
-        self._voice = voice
+        self._voice = voice and voice_recv is not None
         self._textassistant = TextAssistant() if self._voice else None  
-        self._sink = WhisperSink()
+        self._sink = WhisperSink() if self._voice and WhisperModel is not None else None
         self._commands = ["play", "resume", "pause", "stop"]
         self._is_listening = False
         self._results = []
@@ -204,7 +213,7 @@ class MusicPlayer:
         else:
             raise RuntimeError("MusicPlayer must be bound to a vc to listen.")
     async def _listen(self):
-        if self._voice:
+        if self._voice and self._sink is not None:
             self.vc.listen(self._sink)
     async def _play(self):
         self.active = True
@@ -234,16 +243,18 @@ class MusicPlayer:
                         text = "".join(text[1:])
                         command, output = self._textassistant.run(text)
                         if command == None and output == None:
-                            speech = generate("Sorry, I didnt quite get that,") 
-                            source2 = discord.FFmpegPCMAudio(speech, pipe=True)
-                            self.mixer.set_source2(source2)
+                            if generate is not None:
+                                speech = generate("Sorry, I didnt quite get that,") 
+                                source2 = discord.FFmpegPCMAudio(speech, pipe=True)
+                                self.mixer.set_source2(source2)
                         if command == "play" and output != None:
                             if not self._is_listening:
                                 self._results = self.backends["youtube"].search(output) # placeholder, look up users prefered backend + add User object
                                 self._sink.lock(id)
-                                speech = generate("which would you like to play. " + " ".join([f"{num}. {self._results[i].title} by {self._results[i].author}" for i in range(len(self._results))])) 
-                                source2 = discord.FFmpegPCMAudio(speech, pipe=True)
-                                self.mixer.set_source2(source2)
+                                if generate is not None:
+                                    speech = generate("which would you like to play. " + " ".join([f"{num}. {self._results[i].title} by {self._results[i].author}" for i in range(len(self._results))])) 
+                                    source2 = discord.FFmpegPCMAudio(speech, pipe=True)
+                                    self.mixer.set_source2(source2)
                                 self._is_listening = True
                         else:
                             num = self._commands.index(command)
@@ -266,7 +277,10 @@ class MusicPlayer:
         await self.leave_channel()
         self.active = False
     async def join_channel(self, vc:discord.VoiceChannel):
-        self.vc = await vc.connect(cls=voice_recv.VoiceRecvClient)
+        if voice_recv is not None:
+            self.vc = await vc.connect(cls=voice_recv.VoiceRecvClient)
+        else:
+            self.vc = await vc.connect()
         await self.listen()
     async def leave_channel(self):
         await self.vc.disconnect()
@@ -392,71 +406,76 @@ class BytesAudioSource(discord.AudioSource):
 
 
 
-class WhisperSink(voice_recv.AudioSink):
-    def __init__(self,triggerwords=None):
-        super().__init__()
-        self.user_packets = defaultdict(lambda: array.array("B"))
-        model = "base" # hardcoded, should be configurable
-        self.whisper = WhisperModel(model, device="auto", compute_type="int8")
-        self.latest_text = None
-        self.triggerwords = triggerwords or ["tempo","play","stop","pause"]
-        self._lock = None
-    def wants_opus(self) -> bool:
-        return False
-    def write(self, user: discord.User | discord.Member | None, data: voice_recv.VoiceData):
-        if isinstance(data.packet, voice_recv.rtp.SilencePacket):
-            return
-
-        if user is None:
-            return
-        
-
-        user_id = user.id
-        self.user_packets[user_id].extend(data.pcm)
-
-        speaking_length = len(self.user_packets[user_id]) / (48000 * 2 * 2)  # assuming PCM format with 48kHz, stereo, 16-bit audio
-
-        if math.floor(speaking_length) == 5:
-            self._transcribe(user_id)
-            self.user_packets[user_id] = array.array("B")
-    def _transcribe(self, user_id):
-        if self._lock != None and self._lock != user_id:
-            return
-        pcm_data = self.user_packets[user_id]
-        audio_data = np.array(pcm_data, dtype="B")
-        audio_buffer = io.BytesIO()
-        with wave.open(audio_buffer, "wb") as wav_file:
-            wav_file.setnchannels(2)  # Stereo
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(48000)  # 48 kHz
-            wav_file.writeframes(audio_data.tobytes())
-        audio_buffer.seek(0)
-        segments, info = self.whisper.transcribe(audio_buffer, beam_size=5)
-        text = "".join([segment.text for segment in segments])
-        if True in [i in text.lower() for i in self.triggerwords] or self._lock != None:
-            if text.startswith(self.triggerwords[0]):
-                text = text[len(self.triggerwords[0])+1:] # get rid of tempo wake word as it isnt a command
-            self.latest_text = str(user_id) + ":" + text
-    def getupdate(self):
-        if self.latest_text != None:
-            text = self.latest_text
+if WhisperModel is not None and voice_recv is not None:
+    class WhisperSink(voice_recv.AudioSink):
+        def __init__(self,triggerwords=None):
+            super().__init__()
+            self.user_packets = defaultdict(lambda: array.array("B"))
+            model = "base" # hardcoded, should be configurable
+            self.whisper = WhisperModel(model, device="auto", compute_type="int8")
             self.latest_text = None
-            return text
-    def lock(self, id):
-        self._lock = id
-    def unlock(self):
-        self._lock = None
-    def cleanup(self):
-        return
+            self.triggerwords = triggerwords or ["tempo","play","stop","pause"]
+            self._lock = None
+        def wants_opus(self) -> bool:
+            return False
+        def write(self, user: discord.User | discord.Member | None, data: voice_recv.VoiceData):
+            if isinstance(data.packet, voice_recv.rtp.SilencePacket):
+                return
 
-    @voice_recv.AudioSink.listener()
-    def on_voice_member_speaking_start(self, member: discord.Member):
-        self.user_packets[member.id] = array.array("B")
+            if user is None:
+                return
+            
 
-    @voice_recv.AudioSink.listener()
-    def on_voice_member_speaking_stop(self, member: discord.Member):
-        self._transcribe(member.id)
-        self.user_packets[member.id] = array.array("B")
+            user_id = user.id
+            self.user_packets[user_id].extend(data.pcm)
+
+            speaking_length = len(self.user_packets[user_id]) / (48000 * 2 * 2)  # assuming PCM format with 48kHz, stereo, 16-bit audio
+
+            if math.floor(speaking_length) == 5:
+                self._transcribe(user_id)
+                self.user_packets[user_id] = array.array("B")
+        def _transcribe(self, user_id):
+            if self._lock != None and self._lock != user_id:
+                return
+            pcm_data = self.user_packets[user_id]
+            audio_data = np.array(pcm_data, dtype="B")
+            audio_buffer = io.BytesIO()
+            with wave.open(audio_buffer, "wb") as wav_file:
+                wav_file.setnchannels(2)  # Stereo
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(48000)  # 48 kHz
+                wav_file.writeframes(audio_data.tobytes())
+            audio_buffer.seek(0)
+            segments, info = self.whisper.transcribe(audio_buffer, beam_size=5)
+            text = "".join([segment.text for segment in segments])
+            if True in [i in text.lower() for i in self.triggerwords] or self._lock != None:
+                if text.startswith(self.triggerwords[0]):
+                    text = text[len(self.triggerwords[0])+1:] # get rid of tempo wake word as it isnt a command
+                self.latest_text = str(user_id) + ":" + text
+        def getupdate(self):
+            if self.latest_text != None:
+                text = self.latest_text
+                self.latest_text = None
+                return text
+        def lock(self, id):
+            self._lock = id
+        def unlock(self):
+            self._lock = None
+        def cleanup(self):
+            return
+
+        @voice_recv.AudioSink.listener()
+        def on_voice_member_speaking_start(self, member: discord.Member):
+            self.user_packets[member.id] = array.array("B")
+
+        @voice_recv.AudioSink.listener()
+        def on_voice_member_speaking_stop(self, member: discord.Member):
+            self._transcribe(member.id)
+            self.user_packets[member.id] = array.array("B")
+else:
+    class WhisperSink:
+        def __init__(self, *args, **kwargs):
+            pass
 
 
 

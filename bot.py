@@ -373,6 +373,96 @@ async def shuffle_autocomplete(
 bot.tree.add_command(setsetting)
 
 
+@discord.app_commands.command(name='importplaylist', description='imports a playlist from spotify or youtube')
+async def importplaylist(interaction: discord.Interaction, url: str, platform: str = None):
+    try:
+        channel = interaction.user.voice.channel
+    except:
+        await interaction.response.send_message("you are not currently in a voice channel.")
+        return
+    permissions = channel.permissions_for(interaction.guild.me)
+    if not permissions.connect or not permissions.speak:
+        await interaction.response.send_message("I do not have permission to play music in that voice channel.")
+        return
+    
+    # Determine platform from URL if not specified
+    if platform is None:
+        if "spotify.com" in url:
+            platform = "spotify"
+        elif "youtube.com" in url or "youtu.be" in url:
+            platform = "youtube"
+        else:
+            await interaction.response.send_message("Could not determine platform from URL. Please specify platform parameter.")
+            return
+    
+    # Check user authorization for the platform
+    userbackends = libTempo.getuserdata(interaction.user.id)
+    if platform not in userbackends["keys"] and platform != "default":
+        await interaction.response.send_message("You are not authorized to use that platform.")
+        return
+    
+    # Check if backend supports playlists
+    if not hasattr(bot.backends[platform], 'getplaylist'):
+        await interaction.response.send_message(f"Platform {platform} does not support playlist importing.")
+        return
+    
+    await interaction.response.send_message("Importing playlist...")
+    
+    try:
+        # Get user key for the platform
+        if platform == "default":
+            userbackend = libTempo.getuserbackend(interaction.user.id)
+            platform = userbackend[0]
+            key = userbackend[1]
+        else:
+            key = libTempo.getuserkey(interaction.user.id, platform)
+        
+        # Import the playlist
+        songs, playlist_name = await bot.backends[platform].getplaylist(url, interaction.user, key=key)
+        
+        if not songs:
+            await interaction.edit_original_response(content="Playlist is empty or could not be imported.")
+            return
+        
+        # Join voice channel if not already connected
+        if bot.players[interaction.guild.id].active == False:
+            try:
+                await bot.players[interaction.guild.id].join_channel(interaction.user.voice.channel) 
+            except:
+                await interaction.edit_original_response(content="Could not join voice channel.")
+                return
+        
+        # Add all songs to the queue
+        songs_added = 0
+        for song in songs:
+            bot.players[interaction.guild.id].add_song(song)
+            songs_added += 1
+        
+        # Start playing if this is the first song in queue
+        if len(bot.players[interaction.guild.id].playlist) == songs_added:
+            await interaction.edit_original_response(content=f"Imported playlist '{playlist_name}' with {songs_added} songs. Now playing first song.")
+            bot.players[interaction.guild.id].play()
+        else:
+            await interaction.edit_original_response(content=f"Imported playlist '{playlist_name}' with {songs_added} songs. Added to queue.")
+            
+    except Exception as e:
+        await interaction.edit_original_response(content=f"Failed to import playlist: {str(e)}")
+
+@importplaylist.autocomplete('platform')
+async def platform_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> typing.List[discord.app_commands.Choice[str]]:
+    platforms = list(bot.backends.keys())
+    platforms.insert(0, "default")
+    return [
+        discord.app_commands.Choice(name=platform, value=platform)
+        for platform in platforms if current.lower() in platform.lower()
+    ]
+
+bot.tree.add_command(importplaylist)
+
+
 @discord.app_commands.command(name='move', description='moves songs in the queue')
 async def move(interaction: discord.Interaction, start:int, end:int):
     if bot.players[interaction.guild.id].active == False:

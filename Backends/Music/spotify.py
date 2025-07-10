@@ -49,6 +49,53 @@ async def getstream(url: str, user: discord.User):
 
 
 
+async def getplaylist(url: str, user: discord.User, key = None):
+    """
+    Extract songs from a Spotify playlist URL
+    Expected URL format: https://open.spotify.com/playlist/{playlist_id}
+    """
+    try:
+        session = lbc.Session.Builder().stored(key).create()
+        oauth_token = session.tokens().get("playlist-read")
+        sp = spotipy.Spotify(auth=oauth_token)
+    except Exception as e:
+        raise ValueError(f"Failed to authenticate with Spotify: {str(e)}")
+    
+    # Extract playlist ID from URL
+    if "playlist/" in url:
+        playlist_id = url.split("playlist/")[1].split("?")[0]
+    else:
+        raise ValueError("Invalid Spotify playlist URL")
+    
+    try:
+        # Get playlist info and tracks
+        playlist = sp.playlist(playlist_id)
+        tracks = sp.playlist_tracks(playlist_id)
+    except Exception as e:
+        raise ValueError(f"Failed to fetch Spotify playlist: {str(e)}")
+    
+    songs = []
+    
+    # Process all tracks (handle pagination)
+    while tracks:
+        for item in tracks['items']:
+            if item['track'] is not None:  # Sometimes tracks can be None if removed
+                track = item['track']
+                video_title = track['name']
+                video_url = track['uri']
+                length = int(track['duration_ms']/1000)
+                author = ", ".join([artist["name"] for artist in track["artists"]])
+                songs.append(libTempo.Song(user, video_title, author, "spotify", length, video_url))
+        
+        # Check if there are more tracks
+        if tracks['next']:
+            tracks = sp.next(tracks)
+        else:
+            break
+    
+    return songs, playlist['name']
+
+
 def auth(username, key):
     try:
         session = lbc.Session.Builder() \
