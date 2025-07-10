@@ -16,7 +16,7 @@ V2 of this bot is a complete rewrite of the bot. The following is planned:
     - Fully disableable
     - Must be runnable on a Rasberry pi 5 with 8GB of ram
 - [X] Native playlist support
-- [ ] Platform playlist support (spotify, youtube, etc)
+- [X] Platform playlist support (spotify, youtube, etc)
 - [ ] Update utility within the bot (will require owner to press a button)
 - [X] Nicer UX
 
@@ -52,9 +52,35 @@ While additional platforms can be easily added, this bot features the following 
 - [X] Pause support
 - [X] Loop support
 - [X] Inbuilt playlists
-- [ ] platform playlists
+- [X] Platform playlists (Spotify and YouTube)
 - [ ] Voice commands
 - [ ] account sharing for paid platforms
+
+## Commands
+
+### Music Commands
+- `/play <song> [platform]` - Search and play a song from the specified platform (defaults to user's preferred platform)
+- `/importplaylist <url> [platform]` - Import an entire playlist from Spotify or YouTube
+- `/stop` - Stop the current session
+- `/pause` - Pause the current song
+- `/resume` - Resume the current song
+- `/skip` - Skip the current song
+- `/queue` - Show the current queue
+- `/shuffle <true/false>` - Enable or disable shuffle mode
+- `/loop <off/queue/song>` - Set loop mode
+- `/move <start> <end>` - Move a song in the queue
+
+### Account Management
+- `/auth <platform> <username> <password>` - Authorize your account for a platform (Spotify)
+- `/deauth <platform>` - Remove authorization for a platform
+- `/setplatform <platform>` - Set your preferred platform for searches
+
+### Playlist Importing
+The bot supports importing playlists from:
+- **Spotify**: `https://open.spotify.com/playlist/{playlist_id}` (requires authentication)
+- **YouTube**: `https://www.youtube.com/playlist?list={playlist_id}` (no authentication required)
+
+Use `/importplaylist <url>` and the bot will automatically detect the platform and import all songs to your queue.
 
 
 known issues:

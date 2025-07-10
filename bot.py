@@ -387,12 +387,12 @@ async def importplaylist(interaction: discord.Interaction, url: str, platform: s
     
     # Determine platform from URL if not specified
     if platform is None:
-        if "spotify.com" in url:
+        if "spotify.com" in url and "playlist/" in url:
             platform = "spotify"
-        elif "youtube.com" in url or "youtu.be" in url:
+        elif ("youtube.com" in url or "youtu.be" in url) and "playlist?list=" in url:
             platform = "youtube"
         else:
-            await interaction.response.send_message("Could not determine platform from URL. Please specify platform parameter.")
+            await interaction.response.send_message("Could not determine platform from URL. Please ensure you're using a valid playlist URL and specify the platform parameter if needed.")
             return
     
     # Check user authorization for the platform
