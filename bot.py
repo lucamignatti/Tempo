@@ -373,6 +373,291 @@ async def shuffle_autocomplete(
 bot.tree.add_command(setsetting)
 
 
+@discord.app_commands.command(name='queueplaylist', description='imports a playlist from spotify or youtube and adds to queue')
+async def queueplaylist(interaction: discord.Interaction, url: str, platform: str = None):
+    try:
+        channel = interaction.user.voice.channel
+    except:
+        await interaction.response.send_message("you are not currently in a voice channel.")
+        return
+    permissions = channel.permissions_for(interaction.guild.me)
+    if not permissions.connect or not permissions.speak:
+        await interaction.response.send_message("I do not have permission to play music in that voice channel.")
+        return
+    
+    # Determine platform from URL if not specified
+    if platform is None:
+        if "spotify.com" in url and "playlist/" in url:
+            platform = "spotify"
+        elif ("youtube.com" in url or "youtu.be" in url) and "playlist?list=" in url:
+            platform = "youtube"
+        else:
+            await interaction.response.send_message("Could not determine platform from URL. Please ensure you're using a valid playlist URL and specify the platform parameter if needed.")
+            return
+    
+    # Check user authorization for the platform
+    userbackends = libTempo.getuserdata(interaction.user.id)
+    if platform not in userbackends["keys"] and platform != "default":
+        await interaction.response.send_message("You are not authorized to use that platform.")
+        return
+    
+    # Check if backend supports playlists
+    if not hasattr(bot.backends[platform], 'getplaylist'):
+        await interaction.response.send_message(f"Platform {platform} does not support playlist importing.")
+        return
+    
+    await interaction.response.send_message("Importing playlist to queue...")
+    
+    try:
+        # Get user key for the platform
+        if platform == "default":
+            userbackend = libTempo.getuserbackend(interaction.user.id)
+            platform = userbackend[0]
+            key = userbackend[1]
+        else:
+            key = libTempo.getuserkey(interaction.user.id, platform)
+        
+        # Import the playlist
+        songs, playlist_name = await bot.backends[platform].getplaylist(url, interaction.user, key=key)
+        
+        if not songs:
+            await interaction.edit_original_response(content="Playlist is empty or could not be imported.")
+            return
+        
+        # Join voice channel if not already connected
+        if bot.players[interaction.guild.id].active == False:
+            try:
+                await bot.players[interaction.guild.id].join_channel(interaction.user.voice.channel) 
+            except:
+                await interaction.edit_original_response(content="Could not join voice channel.")
+                return
+        
+        # Add all songs to the queue
+        songs_added = 0
+        for song in songs:
+            bot.players[interaction.guild.id].add_song(song)
+            songs_added += 1
+        
+        # Start playing if this is the first song in queue
+        if len(bot.players[interaction.guild.id].playlist) == songs_added:
+            await interaction.edit_original_response(content=f"Imported playlist '{playlist_name}' with {songs_added} songs to queue. Now playing first song.")
+            bot.players[interaction.guild.id].play()
+        else:
+            await interaction.edit_original_response(content=f"Imported playlist '{playlist_name}' with {songs_added} songs. Added to queue.")
+            
+    except Exception as e:
+        await interaction.edit_original_response(content=f"Failed to import playlist to queue: {str(e)}")
+
+@queueplaylist.autocomplete('platform')
+async def queueplaylist_platform_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> typing.List[discord.app_commands.Choice[str]]:
+    platforms = list(bot.backends.keys())
+    platforms.insert(0, "default")
+    return [
+        discord.app_commands.Choice(name=platform, value=platform)
+        for platform in platforms if current.lower() in platform.lower()
+    ]
+
+bot.tree.add_command(queueplaylist)
+
+
+@discord.app_commands.command(name='importplaylist', description='imports a playlist from spotify or youtube to your personal playlists')
+async def importplaylist(interaction: discord.Interaction, url: str, name: str = None, platform: str = None):
+    # Determine platform from URL if not specified
+    if platform is None:
+        if "spotify.com" in url and "playlist/" in url:
+            platform = "spotify"
+        elif ("youtube.com" in url or "youtu.be" in url) and "playlist?list=" in url:
+            platform = "youtube"
+        else:
+            await interaction.response.send_message("Could not determine platform from URL. Please ensure you're using a valid playlist URL and specify the platform parameter if needed.")
+            return
+    
+    # Check user authorization for the platform
+    userbackends = libTempo.getuserdata(interaction.user.id)
+    if platform not in userbackends["keys"] and platform != "default":
+        await interaction.response.send_message("You are not authorized to use that platform.")
+        return
+    
+    # Check if backend supports playlists
+    if not hasattr(bot.backends[platform], 'getplaylist'):
+        await interaction.response.send_message(f"Platform {platform} does not support playlist importing.")
+        return
+    
+    await interaction.response.send_message("Importing playlist to your library...")
+    
+    try:
+        # Get user key for the platform
+        if platform == "default":
+            userbackend = libTempo.getuserbackend(interaction.user.id)
+            platform = userbackend[0]
+            key = userbackend[1]
+        else:
+            key = libTempo.getuserkey(interaction.user.id, platform)
+        
+        # Import the playlist
+        songs, playlist_name = await bot.backends[platform].getplaylist(url, interaction.user, key=key)
+        
+        if not songs:
+            await interaction.edit_original_response(content="Playlist is empty or could not be imported.")
+            return
+        
+        # Use provided name or default to original playlist name
+        saved_playlist_name = name if name else playlist_name
+        
+        # Check if playlist name already exists
+        if libTempo.get_user_playlist(interaction.user.id, saved_playlist_name) is not None:
+            await interaction.edit_original_response(content=f"You already have a playlist named '{saved_playlist_name}'. Please choose a different name.")
+            return
+        
+        # Create the playlist
+        libTempo.create_user_playlist(interaction.user.id, saved_playlist_name)
+        
+        # Add all songs to the user's playlist
+        songs_added = 0
+        for song in songs:
+            song_dict = libTempo.song_to_dict(song)
+            libTempo.add_song_to_user_playlist(interaction.user.id, saved_playlist_name, song_dict)
+            songs_added += 1
+        
+        await interaction.edit_original_response(content=f"Imported playlist '{playlist_name}' as '{saved_playlist_name}' with {songs_added} songs to your library.")
+            
+    except Exception as e:
+        await interaction.edit_original_response(content=f"Failed to import playlist: {str(e)}")
+
+@importplaylist.autocomplete('platform')
+async def importplaylist_platform_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> typing.List[discord.app_commands.Choice[str]]:
+    platforms = list(bot.backends.keys())
+    platforms.insert(0, "default")
+    return [
+        discord.app_commands.Choice(name=platform, value=platform)
+        for platform in platforms if current.lower() in platform.lower()
+    ]
+
+bot.tree.add_command(importplaylist)
+
+
+@discord.app_commands.command(name='playlists', description='lists your saved playlists')
+async def playlists(interaction: discord.Interaction):
+    user_playlists = libTempo.get_user_playlists(interaction.user.id)
+    
+    if not user_playlists:
+        await interaction.response.send_message("You don't have any saved playlists yet. Use `/importplaylist` to create one!")
+        return
+    
+    embed = discord.Embed(title="Your Playlists", color=0x00ff00)
+    
+    for playlist_name, songs in user_playlists.items():
+        song_count = len(songs)
+        # Calculate total duration
+        total_duration = sum(song.get('length', 0) for song in songs)
+        total_minutes, total_seconds = divmod(total_duration, 60)
+        duration_str = f"{total_minutes}:{total_seconds:02d}"
+        
+        embed.add_field(
+            name=f"🎵 {playlist_name}", 
+            value=f"{song_count} songs • {duration_str}", 
+            inline=False
+        )
+    
+    await interaction.response.send_message(embed=embed)
+
+bot.tree.add_command(playlists)
+
+
+@discord.app_commands.command(name='playplaylist', description='plays songs from one of your saved playlists')
+async def playplaylist(interaction: discord.Interaction, playlist_name: str):
+    try:
+        channel = interaction.user.voice.channel
+    except:
+        await interaction.response.send_message("you are not currently in a voice channel.")
+        return
+    permissions = channel.permissions_for(interaction.guild.me)
+    if not permissions.connect or not permissions.speak:
+        await interaction.response.send_message("I do not have permission to play music in that voice channel.")
+        return
+    
+    # Get the user's playlist
+    user_playlist = libTempo.get_user_playlist(interaction.user.id, playlist_name)
+    if user_playlist is None:
+        await interaction.response.send_message(f"You don't have a playlist named '{playlist_name}'.")
+        return
+    
+    if not user_playlist:
+        await interaction.response.send_message(f"Playlist '{playlist_name}' is empty.")
+        return
+    
+    await interaction.response.send_message(f"Loading playlist '{playlist_name}'...")
+    
+    try:
+        # Join voice channel if not already connected
+        if bot.players[interaction.guild.id].active == False:
+            try:
+                await bot.players[interaction.guild.id].join_channel(interaction.user.voice.channel) 
+            except:
+                await interaction.edit_original_response(content="Could not join voice channel.")
+                return
+        
+        # Convert song dictionaries back to Song objects and add to queue
+        songs_added = 0
+        for song_dict in user_playlist:
+            song = libTempo.dict_to_song(song_dict, bot)
+            bot.players[interaction.guild.id].add_song(song)
+            songs_added += 1
+        
+        # Start playing if this is the first song in queue
+        if len(bot.players[interaction.guild.id].playlist) == songs_added:
+            await interaction.edit_original_response(content=f"Playing playlist '{playlist_name}' with {songs_added} songs.")
+            bot.players[interaction.guild.id].play()
+        else:
+            await interaction.edit_original_response(content=f"Added playlist '{playlist_name}' with {songs_added} songs to queue.")
+            
+    except Exception as e:
+        await interaction.edit_original_response(content=f"Failed to play playlist: {str(e)}")
+
+@playplaylist.autocomplete('playlist_name')
+async def playplaylist_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> typing.List[discord.app_commands.Choice[str]]:
+    user_playlists = libTempo.get_user_playlists(interaction.user.id)
+    playlist_names = list(user_playlists.keys())
+    return [
+        discord.app_commands.Choice(name=name, value=name)
+        for name in playlist_names if current.lower() in name.lower()
+    ][:25]  # Discord limit
+
+bot.tree.add_command(playplaylist)
+
+
+@discord.app_commands.command(name='deleteplaylist', description='deletes one of your saved playlists')
+async def deleteplaylist(interaction: discord.Interaction, playlist_name: str):
+    success = libTempo.delete_user_playlist(interaction.user.id, playlist_name)
+    if success:
+        await interaction.response.send_message(f"Deleted playlist '{playlist_name}'.")
+    else:
+        await interaction.response.send_message(f"You don't have a playlist named '{playlist_name}'.")
+
+@deleteplaylist.autocomplete('playlist_name')
+async def deleteplaylist_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> typing.List[discord.app_commands.Choice[str]]:
+    user_playlists = libTempo.get_user_playlists(interaction.user.id)
+    playlist_names = list(user_playlists.keys())
+    return [
+        discord.app_commands.Choice(name=name, value=name)
+        for name in playlist_names if current.lower() in name.lower()
+    ][:25]  # Discord limit
+
+bot.tree.add_command(deleteplaylist)
+
+
 @discord.app_commands.command(name='move', description='moves songs in the queue')
 async def move(interaction: discord.Interaction, start:int, end:int):
     if bot.players[interaction.guild.id].active == False:

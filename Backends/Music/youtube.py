@@ -66,5 +66,43 @@ async def getstream(url: str, user: discord.User = None):
     return await YTDLSource.from_url(url, loop=asyncio.get_event_loop(), stream=True)
 
 
+async def getplaylist(url: str, user: discord.User, key = None):
+    """
+    Extract songs from a YouTube playlist URL
+    Expected URL format: https://www.youtube.com/playlist?list={playlist_id}
+    """
+    ydl_opts = {
+        'extract_flat': True,  # Don't download, just extract metadata
+        'ignoreerrors': True,  # Ignore any errors during extraction
+        'quiet': True,  # Suppress console output
+        'no_warnings': True,
+    }
+
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        try:
+            playlist_info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            raise ValueError(f"Failed to extract YouTube playlist: {str(e)}")
+    
+    if not playlist_info or 'entries' not in playlist_info:
+        raise ValueError("Invalid YouTube playlist URL or playlist is empty")
+    
+    songs = []
+    playlist_title = playlist_info.get('title', 'Unknown Playlist')
+    
+    # Process each entry in the playlist
+    for entry in playlist_info['entries']:
+        if entry is not None:  # Sometimes entries can be None if removed/private
+            video_title = entry.get('title', 'Unknown Title')
+            video_id = entry.get('id', '')
+            video_url = entry.get('url') or f"https://www.youtube.com/watch?v={video_id}"
+            duration = entry.get('duration', 0) or 0  # Handle None duration
+            uploader = entry.get('uploader', 'Unknown Artist')
+            
+            songs.append(libTempo.Song(user, video_title, uploader, "youtube", duration, video_url))
+    
+    return songs, playlist_title
+
+
 def auth(username, key):
     return ""
